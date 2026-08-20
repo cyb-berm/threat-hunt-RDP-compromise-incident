@@ -8,170 +8,348 @@
 </p>
 
 
+# 🕵️ DFIR Investigation: RDP Compromise → C2 → Exfiltration
 
+> A Microsoft Defender for Endpoint (MDE) Advanced Hunting investigation tracing a simulated RDP compromise from initial access through data exfiltration.
 
-# 🛡️ Threat Hunt Report – <Hunt Name>
-
----
-
-## 📌 Executive Summary
-
-<Brief, high-level overview of the threat hunt.  
-Answer what happened, why it matters, and what was discovered in 3–4 sentences.>
+**Severity:** 🔴 High &nbsp;|&nbsp; **Status:** ✅ Complete &nbsp;|&nbsp; **Tooling:** Microsoft Defender for Endpoint · KQL / Advanced Hunting
 
 ---
 
-## 🎯 Hunt Objectives
+## 📖 Table of Contents
 
-- Identify malicious activity across endpoints and network telemetry  
-- Correlate attacker behavior to MITRE ATT&CK techniques  
-- Document evidence, detection gaps, and response opportunities  
-
----
-
-## 🧭 Scope & Environment
-
-- **Environment:** <Placeholder>  
-- **Data Sources:** <Placeholder>  
-- **Timeframe:** <YYYY-MM-DD → YYYY-MM-DD>  
-
----
-
-## 📚 Table of Contents
-
-- [🧠 Hunt Overview](#-hunt-overview)
-- [🧬 MITRE ATT&CK Summary](#-mitre-attck-summary)
-- [🔍 Flag Analysis](#-flag-analysis)
-  - [🚩 Flag 1](#-flag-1)
-  - [🚩 Flag 2](#-flag-2)
-  - [🚩 Flag 3](#-flag-3)
-  - [🚩 Flag 4](#-flag-4)
-  - [🚩 Flag 5](#-flag-5)
-  - [🚩 Flag 6](#-flag-6)
-  - [🚩 Flag 7](#-flag-7)
-  - [🚩 Flag 8](#-flag-8)
-  - [🚩 Flag 9](#-flag-9)
-  - [🚩 Flag 10](#-flag-10)
-  - [🚩 Flag 11](#-flag-11)
-  - [🚩 Flag 12](#-flag-12)
-  - [🚩 Flag 13](#-flag-13)
-  - [🚩 Flag 14](#-flag-14)
-  - [🚩 Flag 15](#-flag-15)
-  - [🚩 Flag 16](#-flag-16)
-  - [🚩 Flag 17](#-flag-17)
-  - [🚩 Flag 18](#-flag-18)
-  - [🚩 Flag 19](#-flag-19)
-  - [🚩 Flag 20](#-flag-20)
-- [🚨 Detection Gaps & Recommendations](#-detection-gaps--recommendations)
-- [🧾 Final Assessment](#-final-assessment)
-- [📎 Analyst Notes](#-analyst-notes)
+- [Overview](#-overview)
+- [Attack Chain](#-attack-chain)
+- [Investigation Timeline](#-investigation-timeline)
+- [Flag-by-Flag Findings](#-flag-by-flag-findings)
+- [MITRE ATT&CK Mapping](#-mitre-attck-mapping)
+- [Key KQL Queries](#-key-kql-queries)
+- [Challenges & How I Solved Them](#-challenges--how-i-solved-them)
+- [Lessons Learned](#-lessons-learned)
+- [IOC Summary](#-ioc-summary)
+- [Conclusion](#-conclusion)
 
 ---
 
-## 🧠 Hunt Overview
+## 🧾 Overview
 
-<High-level narrative describing the attack lifecycle, key behaviors observed, and why this hunt matters.>
+This investigation reconstructs a simulated Windows host compromise using **Microsoft Defender for Endpoint** telemetry and **KQL Advanced Hunting** queries. The attacker gained access via **RDP**, executed a masquerading binary, established persistence, disabled defenses, performed reconnaissance, staged data, and attempted exfiltration to external C2 infrastructure.
 
----
-
-## 🧬 MITRE ATT&CK Summary
-
-| Flag | Technique Category | MITRE ID | Priority |
-|-----:|-------------------|----------|----------|
-| 1 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 2 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 3 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 4 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 5 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 6 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 7 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 8 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 9 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 10 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 11 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 12 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 13 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 14 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 15 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 16 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 17 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 18 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 19 | <Placeholder> | <Placeholder> | <Placeholder> |
-| 20 | <Placeholder> | <Placeholder> | <Placeholder> |
+The investigation moved sequentially across five MDE tables — `DeviceLogonEvents`, `DeviceProcessEvents`, `DeviceRegistryEvents`, `DeviceFileEvents`, and `DeviceNetworkEvents` — pivoting on indicators discovered at each stage.
 
 ---
 
-## 🔍 Flag Analysis
+## 🧩 Attack Chain
 
-_All flags below are collapsible for readability._
+```
+RDP Initial Access
+        │
+        ▼
+Compromised Account  →  slflare
+        │
+        ▼
+Malicious Execution  →  msupdate.exe
+        │
+        ▼
+Persistence          →  Scheduled Task: MicrosoftUpdateSync
+        │
+        ▼
+Defense Evasion      →  Defender Exclusion: C:\Windows\Temp
+        │
+        ▼
+System Discovery     →  systeminfo
+        │
+        ▼
+Data Staging         →  backup_sync.zip
+        │
+        ▼
+C2 Communication     →  185.92.220.87
+        │
+        ▼
+Exfiltration Attempt →  185.92.220.87:8081
+```
 
 ---
+
+## 🕒 Investigation Timeline
+
+| Stage | Technique | Description |
+|---|---|---|
+| 1️⃣ Initial Access | External RDP session | Attacker connects to the host over RDP |
+| 2️⃣ Account Compromise | Credential use | Attacker operates as `slflare` |
+| 3️⃣ Execution | Malicious binary | Runs `msupdate.exe`, disguised as a legitimate update process |
+| 4️⃣ Persistence | Scheduled task | Creates `MicrosoftUpdateSync` to survive reboot/logoff |
+| 5️⃣ Defense Evasion | Defender exclusion | Excludes `C:\Windows\Temp` from AV scanning |
+| 6️⃣ Discovery | System enumeration | Runs `systeminfo` to profile the host |
+| 7️⃣ Collection | Data staging | Compresses data into `backup_sync.zip` |
+| 8️⃣ C2 | Outbound beacon | Connects to `185.92.220.87` |
+| 9️⃣ Exfiltration | Data transfer attempt | Sends data to `185.92.220.87:8081` |
+
+---
+
+## 🚩 Flag-by-Flag Findings
 
 <details>
-<summary id="-flag-1">🚩 <strong>Flag 1: <Technique Name></strong></summary>
+<summary><strong>Flag 1 — Initial Access</strong> (T1133 / T1021.001)</summary>
 
-### 🎯 Objective
-<What the attacker was trying to accomplish>
+**Objective:** Identify how the attacker initially gained access.
 
-### 📌 Finding
-<High-level description of the activity>
+**Approach:** Reviewed `DeviceLogonEvents` for `RemoteInteractive` logon types, filtering on successful authentication, external source IPs, and unusual logon times.
 
-### 🔍 Evidence
+```kql
+DeviceLogonEvents
+| where DeviceName =~ "TARGET-HOST"
+| where LogonType == "RemoteInteractive"
+| project Timestamp, DeviceName, AccountName, RemoteIP, LogonType, ActionType
+| order by Timestamp asc
+```
 
-| Field | Value |
-|------|-------|
-| Host | <Placeholder> |
-| Timestamp | <Placeholder> |
-| Process | <Placeholder> |
-| Parent Process | <Placeholder> |
-| Command Line | <Placeholder> |
+**Finding:** Established that the attacker's entry point was an external RDP session.
+</details>
 
-### 💡 Why it matters
-<Explain impact, risk, and relevance>
+<details>
+<summary><strong>Flag 2 — Compromised Account</strong></summary>
 
-### 🔧 KQL Query Used
-<Add KQL here>
+**Objective:** Identify the account used by the attacker.
 
-### 🖼️ Screenshot
-<Insert screenshot>
+**Approach:** Correlated the successful RDP logon with the account used in subsequent process, registry, file, and network activity.
 
-### 🛠️ Detection Recommendation
+**Answer:** `slflare`
 
-**Hunting Tip:**  
-<Actionable guidance for defenders>
+This account became the primary pivot for every later stage of the investigation.
+</details>
 
+<details>
+<summary><strong>Flag 3 — Executed Binary</strong> (T1059.003 / T1204.002)</summary>
+
+**Objective:** Identify the binary the attacker executed after gaining access.
+
+```kql
+DeviceProcessEvents
+| where DeviceName =~ "TARGET-HOST"
+| where AccountName =~ "slflare"
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName
+| order by Timestamp asc
+```
+
+**Answer:** `msupdate.exe` — named to imitate a legitimate Microsoft update process.
+</details>
+
+<details>
+<summary><strong>Flag 4 — Initial Malicious Activity</strong></summary>
+
+**Objective:** Identify the attacker's next action following execution of `msupdate.exe`.
+
+**Status:** ⚠️ Not yet confirmed — pending review of process, registry, file, and network telemetry immediately following execution.
+</details>
+
+<details>
+<summary><strong>Flag 5 — Persistence Mechanism</strong> (T1053.005)</summary>
+
+**Objective:** Identify the persistence mechanism the attacker created.
+
+```kql
+DeviceProcessEvents
+| where DeviceName =~ "TARGET-HOST"
+| where ProcessCommandLine has_any ("schtasks", "ScheduledTask", "Register-ScheduledTask")
+| project Timestamp, AccountName, FileName, FolderPath, ProcessCommandLine
+| order by Timestamp asc
+```
+
+**Answer:** Scheduled task `MicrosoftUpdateSync`
+
+> ⚠️ A decoy task, `LabUpdaterTask`, appeared during the search but did not correlate with the attacker's account, host, or timeline — it was ruled out.
+</details>
+
+<details>
+<summary><strong>Flag 6 — Defender Configuration Change</strong> (T1562.001)</summary>
+
+**Objective:** Identify the folder excluded from Microsoft Defender scanning.
+
+```kql
+DeviceRegistryEvents
+| where DeviceName =~ "TARGET-HOST"
+| where RegistryKey has_any ("Windows Defender", "Exclusions")
+| project Timestamp, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp asc
+```
+
+**Answer:** `C:\Windows\Temp`
+</details>
+
+<details>
+<summary><strong>Flag 7 — Discovery Command</strong> (T1082)</summary>
+
+**Objective:** Identify the exact discovery command executed.
+
+```kql
+DeviceProcessEvents
+| where DeviceName =~ "TARGET-HOST"
+| where ProcessCommandLine has_any ("systeminfo", "whoami", "ipconfig", "hostname", "wmic", "ver")
+| project Timestamp, AccountName, FileName, FolderPath, ProcessCommandLine
+| order by Timestamp asc
+```
+
+**Answer:** `C:\Windows\System32\cmd.exe /c systeminfo`
+</details>
+
+<details>
+<summary><strong>Flag 8 — Archive Created</strong> (T1560.001)</summary>
+
+**Objective:** Identify the archive file created for data staging.
+
+```kql
+DeviceFileEvents
+| where DeviceName =~ "TARGET-HOST"
+| where FileName endswith ".zip" or FileName endswith ".rar" or FileName endswith ".7z"
+| project Timestamp, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by Timestamp asc
+```
+
+**Answer:** `backup_sync.zip`
+
+> ⚠️ A second, unrelated archive (`docs.zip`) also appeared and was ruled out via account/process/timeline correlation.
+</details>
+
+<details>
+<summary><strong>Flag 9 — C2 Destination</strong> (T1071.001 / T1105)</summary>
+
+**Objective:** Identify the external server the attacker communicated with.
+
+```kql
+DeviceNetworkEvents
+| where DeviceName =~ "TARGET-HOST"
+| where RemoteIPType == "Public"
+| project Timestamp, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, RemoteUrl, Protocol, ActionType
+| order by Timestamp asc
+```
+
+**Answer:** `185.92.220.87`
+</details>
+
+<details>
+<summary><strong>Flag 10 — Exfiltration Attempt</strong> (T1048.003)</summary>
+
+**Objective:** Identify the destination IP and port used in the exfiltration attempt.
+
+**Approach:** Reviewed `DeviceNetworkEvents` after archive creation, correlating with the previously identified C2 IP.
+
+**Answer:** `185.92.220.87:8081`
 </details>
 
 ---
 
-<!-- Duplicate Flag 1 section for Flags 2–20 -->
+## 📊 Flag Answer Reference
+
+| Flag | Finding | MITRE ATT&CK |
+|:---:|---|---|
+| 1 | RDP initial access | T1133 / T1021.001 |
+| 2 | `slflare` | Account Compromise |
+| 3 | `msupdate.exe` | T1059.003 / T1204.002 |
+| 4 | *Pending confirmation* | — |
+| 5 | `MicrosoftUpdateSync` | T1053.005 |
+| 6 | `C:\Windows\Temp` | T1562.001 |
+| 7 | `cmd.exe /c systeminfo` | T1082 |
+| 8 | `backup_sync.zip` | T1560.001 |
+| 9 | `185.92.220.87` | T1071.001 / T1105 |
+| 10 | `185.92.220.87:8081` | T1048.003 |
 
 ---
 
-## 🚨 Detection Gaps & Recommendations
+## 🧬 MITRE ATT&CK Mapping
 
-### Observed Gaps
-- <Placeholder>
-- <Placeholder>
-- <Placeholder>
-
-### Recommendations
-- <Placeholder>
-- <Placeholder>
-- <Placeholder>
-
----
-
-## 🧾 Final Assessment
-
-<Concise executive-style conclusion summarizing risk, attacker sophistication, and defensive posture.>
+| Technique ID | Technique Name | Evidence |
+|---|---|---|
+| T1133 | External Remote Services | RDP entry point |
+| T1021.001 | Remote Services: RDP | Successful remote-interactive logon |
+| T1059.003 | Command and Scripting Interpreter: Windows Command Shell | `cmd.exe /c systeminfo` |
+| T1204.002 | User Execution: Malicious File | `msupdate.exe` |
+| T1053.005 | Scheduled Task/Job: Scheduled Task | `MicrosoftUpdateSync` |
+| T1562.001 | Impair Defenses: Disable or Modify Tools | `C:\Windows\Temp` exclusion |
+| T1082 | System Information Discovery | `systeminfo` |
+| T1560.001 | Archive Collected Data: Local Archiving | `backup_sync.zip` |
+| T1071.001 | Application Layer Protocol: Web Protocols | C2 communication |
+| T1105 | Ingress Tool Transfer | Tooling retrieval via C2 |
+| T1048.003 | Exfiltration Over Unencrypted Protocol | `185.92.220.87:8081` |
 
 ---
 
-## 📎 Analyst Notes
+## 🔍 Key KQL Queries
 
-- Report structured for interview and portfolio review  
-- Evidence reproducible via advanced hunting  
-- Techniques mapped directly to MITRE ATT&CK  
+**Process execution baseline**
+```kql
+DeviceProcessEvents
+| where DeviceName =~ "TARGET-HOST"
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName
+| order by Timestamp asc
+```
+
+All stage-specific queries are included inline within each [flag write-up](#-flag-by-flag-findings) above.
 
 ---
+
+## ⚠️ Challenges & How I Solved Them
+
+**1. Distinguishing malicious from legitimate activity**
+The environment contained many legitimate processes, scheduled tasks, and Defender events. A suspicious-looking name — like the decoy `LabUpdaterTask` — wasn't enough on its own. Every artifact had to correlate with the compromised account, host, timestamp, and overall attack timeline before being trusted as evidence.
+
+**2. No single table told the whole story**
+The attack had to be reconstructed by pivoting across five tables in sequence:
+
+```
+DeviceLogonEvents → DeviceProcessEvents → DeviceRegistryEvents → DeviceFileEvents → DeviceNetworkEvents
+```
+
+Each table contributed one piece: account → binary → Defender change → discovery/archive → network activity.
+
+**3. Avoiding false positives**
+Multiple archives (`docs.zip` vs. `backup_sync.zip`) and multiple external connections existed in the telemetry. Only correlation with the attacker's account, process, and timeline separated real evidence from noise.
+
+**4. Isolating the correct network destination**
+Not every external IP was attacker infrastructure. The C2 IP (`185.92.220.87`) and the exfiltration destination (`185.92.220.87:8081`) were only confirmed by tying network events back to the malicious process and account.
+
+---
+
+## 🧠 Lessons Learned
+
+- **Follow the timeline.** Access → Execution → Persistence → Defense Evasion → Discovery → Collection → C2 → Exfiltration — treating the incident as a connected chain (not isolated events) made everything else click.
+- **Pivot on known indicators.** Once `slflare`, `msupdate.exe`, or `backup_sync.zip` was confirmed, each became a search anchor for the next stage.
+- **Command-line telemetry is gold.** Knowing `cmd.exe` ran is far less useful than knowing it ran `/c systeminfo`.
+- **"Suspicious" ≠ "malicious."** The right question is always *"does this correlate with the attack?"* — not *"does this look bad?"*
+- **Failed connections still matter.** Even unsuccessful outbound attempts reveal attacker infrastructure and intent.
+
+---
+
+## 🛡️ IOC Summary
+
+**Host Indicators**
+
+| Type | Value |
+|---|---|
+| Compromised Account | `slflare` |
+| Malicious Executable | `msupdate.exe` |
+| Persistence (Scheduled Task) | `MicrosoftUpdateSync` |
+| Defender Exclusion | `C:\Windows\Temp` |
+| Discovery Command | `C:\Windows\System32\cmd.exe /c systeminfo` |
+| Staged Archive | `backup_sync.zip` |
+
+**Network Indicators**
+
+| Type | Value |
+|---|---|
+| C2 Server | `185.92.220.87` |
+| Exfiltration Destination | `185.92.220.87:8081` |
+
+---
+
+## 🎯 Conclusion
+
+This investigation traced a full attack lifecycle — from RDP compromise to attempted exfiltration — using Microsoft Defender for Endpoint's Advanced Hunting tables. The core takeaway was **correlation over assumption**: a scheduled task, an archive, or an external IP can each look suspicious in isolation, but only tying them to the compromised account, host, process, and timeline confirms whether they're part of the attack.
+
+**Final chain confirmed:**
+
+`RDP Access → slflare → msupdate.exe → MicrosoftUpdateSync → C:\Windows\Temp exclusion → systeminfo → backup_sync.zip → 185.92.220.87 → 185.92.220.87:8081`
+
+---
+
+<p align="center"><sub>Investigation conducted using Microsoft Defender for Endpoint · Advanced Hunting (KQL)</sub></p>
