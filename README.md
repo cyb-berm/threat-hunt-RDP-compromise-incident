@@ -140,8 +140,7 @@ DeviceProcessEvents
 
 **Objective:** Identify the attacker's next action following execution of `msupdate.exe`.
 
-**Status:** ⚠️ Not yet confirmed — pending review of process, registry, file, and network telemetry immediately following execution.
-</details>
+**Status:** "msupdate.exe" -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1 
 
 <details>
 <summary><strong>Flag 5 — Persistence Mechanism</strong> (T1053.005)</summary>
@@ -246,7 +245,7 @@ DeviceNetworkEvents
 | 1 | RDP initial access | T1133 / T1021.001 |
 | 2 | `slflare` | Account Compromise |
 | 3 | `msupdate.exe` | T1059.003 / T1204.002 |
-| 4 | *Pending confirmation* | — |
+| 4 | `"msupdate.exe" -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1` | — |
 | 5 | `MicrosoftUpdateSync` | T1053.005 |
 | 6 | `C:\Windows\Temp` | T1562.001 |
 | 7 | `cmd.exe /c systeminfo` | T1082 |
