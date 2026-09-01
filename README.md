@@ -14,6 +14,7 @@
 
 **Severity:** 🔴 High &nbsp;|&nbsp; **Status:** ✅ Complete &nbsp;|&nbsp; **Tooling:** Microsoft Defender for Endpoint · KQL / Advanced Hunting
 
+
 ---
 
 ## 📖 Table of Contents
@@ -105,6 +106,8 @@ DeviceLogonEvents
 ```
 
 **Finding:** Established that the attacker's entry point was an external RDP session.
+
+![Flag 1 - RDP Logon Event](./images/flag1-rdp-logon.png)
 </details>
 
 <details>
@@ -114,9 +117,18 @@ DeviceLogonEvents
 
 **Approach:** Correlated the successful RDP logon with the account used in subsequent process, registry, file, and network activity.
 
+```kql
+DeviceLogonEvents
+| where DeviceName contains "flare"
+| where RemoteIP != ""
+| project TimeGenerated, AccountName, RemoteIP, ActionType
+```
+
 **Answer:** `slflare`
 
-This account became the primary pivot for every later stage of the investigation.
+The query results show a `LogonSuccess` event for `slflare` from remote IP `159.26.106.84`, preceded by two `LogonFailed` attempts from the same source — consistent with a brute-force-then-success RDP pattern. This account became the primary pivot for every later stage of the investigation.
+
+![Flag 2 - Compromised Account](./images/flag2-account.png)
 </details>
 
 <details>
@@ -126,13 +138,25 @@ This account became the primary pivot for every later stage of the investigation
 
 ```kql
 DeviceProcessEvents
-| where DeviceName =~ "TARGET-HOST"
 | where AccountName =~ "slflare"
-| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName
+| where Timestamp between (datetime(2025-09-10 18:40:00) .. datetime(2025-09-17 04:00:00))
+| project
+    Timestamp, DeviceName, AccountName, FileName, FolderPath,
+    ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
 | order by Timestamp asc
 ```
 
 **Answer:** `msupdate.exe` — named to imitate a legitimate Microsoft update process.
+
+**Evidence:** `msupdate.exe` was launched from `C:\Users\Public\msupdate.exe` via PowerShell with:
+
+```
+"msupdate.exe" -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1
+```
+
+It then spawned `conhost.exe` and `whoami.exe`, confirming the binary was actively executing and beginning reconnaissance immediately after launch.
+
+![Flag 3 - Malicious Process Execution](./images/flag3-msupdate.png)
 </details>
 
 <details>
@@ -140,7 +164,15 @@ DeviceProcessEvents
 
 **Objective:** Identify the attacker's next action following execution of `msupdate.exe`.
 
-**Status:** "msupdate.exe" -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1 
+**Answer:**
+```
+"msupdate.exe" -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1
+```
+
+Immediately after execution, `msupdate.exe` invoked PowerShell with `-ExecutionPolicy Bypass` to run a script staged in the public user directory (`update_check.ps1`), sidestepping the host's PowerShell execution policy restrictions.
+
+![Flag 4 - Initial Malicious Activity](./images/flag4-activity.png)
+</details>
 
 <details>
 <summary><strong>Flag 5 — Persistence Mechanism</strong> (T1053.005)</summary>
@@ -158,6 +190,8 @@ DeviceProcessEvents
 **Answer:** Scheduled task `MicrosoftUpdateSync`
 
 > ⚠️ A decoy task, `LabUpdaterTask`, appeared during the search but did not correlate with the attacker's account, host, or timeline — it was ruled out.
+
+![Flag 5 - Scheduled Task Persistence](./images/flag5-scheduled-task.png)
 </details>
 
 <details>
@@ -174,6 +208,8 @@ DeviceRegistryEvents
 ```
 
 **Answer:** `C:\Windows\Temp`
+
+![Flag 6 - Defender Exclusion](./images/flag6-defender-exclusion.png)
 </details>
 
 <details>
@@ -190,6 +226,8 @@ DeviceProcessEvents
 ```
 
 **Answer:** `C:\Windows\System32\cmd.exe /c systeminfo`
+
+![Flag 7 - Discovery Command](./images/flag7-systeminfo.png)
 </details>
 
 <details>
@@ -208,6 +246,8 @@ DeviceFileEvents
 **Answer:** `backup_sync.zip`
 
 > ⚠️ A second, unrelated archive (`docs.zip`) also appeared and was ruled out via account/process/timeline correlation.
+
+![Flag 8 - Archive Creation](./images/flag8-archive.png)
 </details>
 
 <details>
@@ -224,6 +264,8 @@ DeviceNetworkEvents
 ```
 
 **Answer:** `185.92.220.87`
+
+![Flag 9 - C2 Network Connection](./images/flag9-c2.png)
 </details>
 
 <details>
@@ -234,6 +276,8 @@ DeviceNetworkEvents
 **Approach:** Reviewed `DeviceNetworkEvents` after archive creation, correlating with the previously identified C2 IP.
 
 **Answer:** `185.92.220.87:8081`
+
+![Flag 10 - Exfiltration Attempt](./images/flag10-exfiltration.png)
 </details>
 
 ---
@@ -245,7 +289,7 @@ DeviceNetworkEvents
 | 1 | RDP initial access | T1133 / T1021.001 |
 | 2 | `slflare` | Account Compromise |
 | 3 | `msupdate.exe` | T1059.003 / T1204.002 |
-| 4 | `"msupdate.exe" -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1` | — |
+| 4 | `msupdate.exe -ExecutionPolicy Bypass -File C:\Users\Public\update_check.ps1` | T1059.001 |
 | 5 | `MicrosoftUpdateSync` | T1053.005 |
 | 6 | `C:\Windows\Temp` | T1562.001 |
 | 7 | `cmd.exe /c systeminfo` | T1082 |
@@ -261,6 +305,7 @@ DeviceNetworkEvents
 |---|---|---|
 | T1133 | External Remote Services | RDP entry point |
 | T1021.001 | Remote Services: RDP | Successful remote-interactive logon |
+| T1059.001 | Command and Scripting Interpreter: PowerShell | `-ExecutionPolicy Bypass -File update_check.ps1` |
 | T1059.003 | Command and Scripting Interpreter: Windows Command Shell | `cmd.exe /c systeminfo` |
 | T1204.002 | User Execution: Malicious File | `msupdate.exe` |
 | T1053.005 | Scheduled Task/Job: Scheduled Task | `MicrosoftUpdateSync` |
@@ -327,6 +372,7 @@ Not every external IP was attacker infrastructure. The C2 IP (`185.92.220.87`) a
 |---|---|
 | Compromised Account | `slflare` |
 | Malicious Executable | `msupdate.exe` |
+| Staged Script | `C:\Users\Public\update_check.ps1` |
 | Persistence (Scheduled Task) | `MicrosoftUpdateSync` |
 | Defender Exclusion | `C:\Windows\Temp` |
 | Discovery Command | `C:\Windows\System32\cmd.exe /c systeminfo` |
@@ -349,6 +395,9 @@ This investigation traced a full attack lifecycle — from RDP compromise to att
 
 `RDP Access → slflare → msupdate.exe → MicrosoftUpdateSync → C:\Windows\Temp exclusion → systeminfo → backup_sync.zip → 185.92.220.87 → 185.92.220.87:8081`
 
+---
+
+<p align="center"><sub>Investigation conducted using Microsoft Defender for Endpoint · Advanced Hunting (KQL)</sub></p>
 ---
 
 <p align="center"><sub>Investigation conducted using Microsoft Defender for Endpoint · Advanced Hunting (KQL)</sub></p>
